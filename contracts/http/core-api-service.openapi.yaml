@@ -1,0 +1,205 @@
+openapi: 3.0.3
+info:
+  title: Core API Service
+  version: 0.1.0
+  description: Public REST API for Agent Jobs, Business Profiles, Trends, and Content Suggestions.
+paths:
+  /api/v1/agent-jobs:
+    get:
+      summary: List agent jobs
+      operationId: listAgentJobs
+      responses:
+        '200':
+          description: List of agent jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentJob'
+    post:
+      summary: Create agent job
+      operationId: createAgentJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentJobRequest'
+      responses:
+        '201':
+          description: Created agent job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentJob'
+  /api/v1/agent-jobs/{jobId}:
+    get:
+      summary: Get agent job by ID
+      operationId: getAgentJob
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentJob'
+        '404':
+          description: Not found
+  /api/v1/agent-jobs/{jobId}/trend-snapshot:
+    get:
+      summary: Get current trend snapshot for an agent job
+      operationId: getTrendSnapshot
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trend snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendSnapshot'
+  /api/v1/suggestions:
+    get:
+      summary: List content suggestions
+      operationId: listSuggestions
+      parameters:
+        - name: jobId
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected, posted]
+      responses:
+        '200':
+          description: List of suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContentSuggestion'
+  /api/v1/suggestions/{suggestionId}/review:
+    post:
+      summary: Review a pending content suggestion (approve/reject)
+      operationId: reviewSuggestion
+      parameters:
+        - name: suggestionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approve, reject]
+      responses:
+        '200':
+          description: Updated suggestion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentSuggestion'
+components:
+  schemas:
+    AgentJob:
+      type: object
+      required: [id, niche, target_platform, autonomy_mode, status, created_at]
+      properties:
+        id:
+          type: string
+        niche:
+          type: string
+        target_platform:
+          type: string
+          enum: [reddit, instagram, linkedin]
+        autonomy_mode:
+          type: string
+          enum: [manual, auto]
+        business_profile_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused]
+        created_at:
+          type: string
+          format: date-time
+    CreateAgentJobRequest:
+      type: object
+      required: [niche, target_platform, autonomy_mode]
+      properties:
+        niche:
+          type: string
+        target_platform:
+          type: string
+          enum: [reddit, instagram, linkedin]
+        autonomy_mode:
+          type: string
+          enum: [manual, auto]
+        business_profile_id:
+          type: string
+    TrendSnapshot:
+      type: object
+      required: [id, agent_job_id, top_topics, generated_at]
+      properties:
+        id:
+          type: string
+        agent_job_id:
+          type: string
+        top_topics:
+          type: array
+          items:
+            type: string
+        top_attributes:
+          type: array
+          items:
+            type: object
+            properties:
+              attribute:
+                type: string
+              score:
+                type: number
+        generated_at:
+          type: string
+          format: date-time
+    ContentSuggestion:
+      type: object
+      required: [id, agent_job_id, content, status, created_at]
+      properties:
+        id:
+          type: string
+        agent_job_id:
+          type: string
+        content:
+          type: string
+        suggested_hashtags:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected, posted]
+        created_at:
+          type: string
+          format: date-time

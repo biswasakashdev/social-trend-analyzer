@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialtrend.internal/contracts/kafka/social.engagement.enriched.schema.json",
+  "title": "SocialEngagementEnrichedEvent",
+  "description": "Enriched engagement event produced by ai-service with sentiment and image attribute intelligence",
+  "type": "object",
+  "required": [
+    "event_id",
+    "raw_event_id",
+    "source",
+    "source_type",
+    "author",
+    "text",
+    "engagement_counts",
+    "timestamp",
+    "normalized_at",
+    "enriched_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this enriched event"
+    },
+    "raw_event_id": {
+      "type": "string",
+      "description": "Identifier of the original raw event"
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["public_api", "external_ingested", "account_automation"]
+    },
+    "agent_job_id": {
+      "type": ["string", "null"]
+    },
+    "author": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "image_ref": {
+      "type": ["string", "null"]
+    },
+    "engagement_counts": {
+      "type": "object",
+      "required": ["likes", "comments"],
+      "properties": {
+        "likes": { "type": "integer", "minimum": 0 },
+        "comments": { "type": "integer", "minimum": 0 },
+        "shares": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "normalized_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "enriched_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sentiment": {
+      "type": "object",
+      "required": ["label", "score"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "enum": ["POSITIVE", "NEGATIVE", "NEUTRAL"]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "image_attributes": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "garment_type": { "type": "string" },
+        "color": { "type": "string" },
+        "style": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialtrend.internal/contracts/kafka/social.engagement.raw.schema.json",
+  "title": "SocialEngagementRawEvent",
+  "description": "Raw un-normalized social engagement event published by upstream collectors or REST ingestion fallback",
+  "type": "object",
+  "required": [
+    "event_id",
+    "source",
+    "source_type",
+    "timestamp",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this raw event"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["reddit", "instagram", "external"],
+      "description": "Platform or upstream producer origin"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["public_api", "external_ingested", "account_automation"],
+      "description": "Channel categorization as defined in PRD Section 4.2"
+    },
+    "agent_job_id": {
+      "type": "string",
+      "description": "Optional target agent job if this collection was scoped to a specific job"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Optional registered client ID for external ingested feeds"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the event occurred on the source platform"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Raw platform-specific payload containing post, comment, and engagement details",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

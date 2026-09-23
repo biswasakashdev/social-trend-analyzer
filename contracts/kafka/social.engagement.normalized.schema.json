@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://socialtrend.internal/contracts/kafka/social.engagement.normalized.schema.json",
+  "title": "SocialEngagementNormalizedEvent",
+  "description": "Canonical normalized engagement event produced by ingestion-service, ready for AI enrichment",
+  "type": "object",
+  "required": [
+    "event_id",
+    "raw_event_id",
+    "source",
+    "source_type",
+    "author",
+    "text",
+    "engagement_counts",
+    "timestamp",
+    "normalized_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this normalized event"
+    },
+    "raw_event_id": {
+      "type": "string",
+      "description": "Identifier of the raw event this was normalized from"
+    },
+    "source": {
+      "type": "string",
+      "description": "Origin platform (reddit, instagram, external)"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["public_api", "external_ingested", "account_automation"],
+      "description": "Collection channel"
+    },
+    "agent_job_id": {
+      "type": ["string", "null"],
+      "description": "Target agent job ID if scoped"
+    },
+    "author": {
+      "type": "string",
+      "description": "Post or comment author username/handle"
+    },
+    "text": {
+      "type": "string",
+      "description": "Main post content, title, or comment text"
+    },
+    "image_ref": {
+      "type": ["string", "null"],
+      "description": "Reference URL or URI to associated image media for vision analysis"
+    },
+    "engagement_counts": {
+      "type": "object",
+      "required": ["likes", "comments"],
+      "properties": {
+        "likes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Likes, upvotes, or equivalent positive reaction count"
+        },
+        "comments": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Comment or reply count"
+        },
+        "shares": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Share, repost, or retweet count"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Original platform creation/event timestamp"
+    },
+    "normalized_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when normalized by ingestion-service"
+    }
+  },
+  "additionalProperties": false
+}
