@@ -1,4 +1,19 @@
 services:
+
+  ingestion-service:
+    image: biswasakash/socialtrend-ingestion:0.1.0
+    ports:
+      - "8081:8081"
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_RAW_TOPIC: social.engagement.raw
+      KAFKA_NORMALIZED_TOPIC: social.engagement.normalized
+      KAFKA_CONSUMER_GROUP: ingestion-service-group
+      HTTP_PORT: 8081
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   kafka:
     image: apache/kafka:3.8.0
     container_name: socialtrend-kafka
@@ -18,7 +33,7 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      test: [ "CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1" ]
       interval: 5s
       timeout: 10s
       retries: 5
@@ -36,7 +51,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U socialtrend -d socialtrend"]
+      test: [ "CMD-SHELL", "pg_isready -U socialtrend -d socialtrend" ]
       interval: 5s
       timeout: 5s
       retries: 5

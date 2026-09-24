@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26.2-alpine3.22 AS builder
 
 WORKDIR /app
 
@@ -16,6 +16,7 @@ COPY services/ingestion-service ./
 # Build binary
 RUN CGO_ENABLED=0 GOOS=linux go build -o /ingestion-service ./cmd/ingestion
 
+# Use <gcr.io/distroless/static-debian13:nonroot> instead of <alpine:3.20> for production
 FROM alpine:3.20
 
 WORKDIR /app
