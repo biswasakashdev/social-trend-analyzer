@@ -42,11 +42,12 @@ func TestHandler_IngestEvents_Valid(t *testing.T) {
 	h.RegisterRoutes(mux)
 
 	raw := model.RawEvent{
-		EventID:    "test-event-1",
-		Source:     model.SourceReddit,
-		SourceType: model.SourceTypePublicAPI,
-		Timestamp:  time.Now().UTC(),
-		Payload:    json.RawMessage(`{"title":"Sample Post","ups":10,"num_comments":2}`),
+		EventID:        "test-event-1",
+		CollectedAt:    time.Now().UTC(),
+		SourcePlatform: "instagram",
+		AccountSource:  "client-trend-app",
+		ContentType:    "image",
+		Payload:        json.RawMessage(`{"title":"Sample Post","ups":10}`),
 	}
 	rawBytes, _ := json.Marshal(raw)
 
@@ -70,6 +71,9 @@ func TestHandler_IngestEvents_Valid(t *testing.T) {
 	if resp["event_id"] != "test-event-1" {
 		t.Errorf("expected event_id=test-event-1, got %v", resp["event_id"])
 	}
+	if resp["source_platform"] != "instagram" {
+		t.Errorf("expected source_platform=instagram, got %v", resp["source_platform"])
+	}
 }
 
 func TestHandler_IngestEvents_Invalid(t *testing.T) {
@@ -82,12 +86,11 @@ func TestHandler_IngestEvents_Invalid(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	// Missing required source_type
+	// Missing required content_type and account_source
 	invalid := map[string]any{
-		"event_id":  "test-bad",
-		"source":    "reddit",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"payload":   map[string]any{"title": "Missing source type"},
+		"event_id":        "test-bad",
+		"source_platform": "instagram",
+		"collected_at":    time.Now().UTC().Format(time.RFC3339),
 	}
 	invalidBytes, _ := json.Marshal(invalid)
 

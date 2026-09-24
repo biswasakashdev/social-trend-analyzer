@@ -21,11 +21,9 @@ func main() {
 	mode := flag.String("mode", "kafka", "Publish mode: 'kafka' (direct to topic) or 'rest' (via POST /ingest/events)")
 	brokersFlag := flag.String("brokers", "localhost:9092", "Kafka brokers comma-separated")
 	rawTopic := flag.String("raw-topic", "social.engagement.raw", "Raw Kafka topic")
-	normalizedTopic := flag.String("norm-topic", "social.engagement.normalized", "Normalized Kafka topic to verify from")
 	restURL := flag.String("rest-url", "http://localhost:8081/ingest/events", "REST fallback endpoint URL")
-	sourceFlag := flag.String("source", "all", "Sample source to publish: 'reddit', 'instagram', 'external', or 'all'")
+	sourceFlag := flag.String("source", "all", "Sample source to publish: 'instagram', 'manual', or 'all'")
 	countFlag := flag.Int("count", 1, "Number of times to publish the sample batch")
-	verifyFlag := flag.Bool("verify", false, "Wait and verify that published events appear on the normalized topic")
 	flag.Parse()
 
 	log.Printf("[publisher] Initializing test publisher (mode=%s, count=%d)...", *mode, *countFlag)
@@ -39,10 +37,9 @@ func main() {
 
 	for i := 0; i < *countFlag; i++ {
 		for _, s := range samples {
-			// Give each published sample a unique event ID and fresh timestamp
 			event := s
-			event.EventID = fmt.Sprintf("test-%s-%s", event.Source, uuid.New().String()[:8])
-			event.Timestamp = time.Now().UTC()
+			event.EventID = fmt.Sprintf("test-%s-%s", event.SourcePlatform, uuid.New().String()[:8])
+			event.CollectedAt = time.Now().UTC()
 
 			if *mode == "rest" {
 				if err := publishViaREST(*restURL, event); err != nil {
@@ -55,20 +52,11 @@ func main() {
 				}
 			}
 			publishedEventIDs = append(publishedEventIDs, event.EventID)
-			log.Printf("[publisher] Successfully published raw event: id=%s source=%s", event.EventID, event.Source)
+			log.Printf("[publisher] Successfully published raw event: id=%s platform=%s", event.EventID, event.SourcePlatform)
 		}
 	}
 
 	log.Printf("[publisher] Finished publishing %d events", len(publishedEventIDs))
-
-	if *verifyFlag {
-		brokers := strings.Split(*brokersFlag, ",")
-		log.Printf("[publisher] Verifying that published events appear on topic %q...", *normalizedTopic)
-		if err := verifyNormalizedEvents(brokers, *normalizedTopic, publishedEventIDs, 15*time.Second); err != nil {
-			log.Fatalf("[publisher] Verification failed: %v", err)
-		}
-		log.Println("[publisher] Verification SUCCEEDED! All events verified on normalized topic.")
-	}
 }
 
 func publishViaKafka(brokers []string, topic string, event model.RawEvent) error {
@@ -122,116 +110,57 @@ func publishViaREST(url string, event model.RawEvent) error {
 	return nil
 }
 
-func verifyNormalizedEvents(brokers []string, topic string, expectedRawIDs []string, timeout time.Duration) error {
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     brokers,
-		Topic:       topic,
-		GroupID:     fmt.Sprintf("verifier-%s", uuid.New().String()),
-		StartOffset: kafka.FirstOffset,
-		MinBytes:    1,
-		MaxBytes:    10e6,
-	})
-	defer reader.Close()
-
-	remaining := make(map[string]bool)
-	for _, id := range expectedRawIDs {
-		remaining[id] = true
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	for len(remaining) > 0 {
-		msg, err := reader.ReadMessage(ctx)
-		if err != nil {
-			return fmt.Errorf("reading message while waiting for %d events: %w", len(remaining), err)
-		}
-
-		var norm model.NormalizedEvent
-		if err := json.Unmarshal(msg.Value, &norm); err != nil {
-			continue
-		}
-
-		if remaining[norm.RawEventID] {
-			log.Printf("[verifier] Verified normalized event received! ID=%s (RawID=%s, Source=%s, Likes=%d, Comments=%d, ImageRef=%v)",
-				norm.EventID, norm.RawEventID, norm.Source, norm.EngagementCounts.Likes, norm.EngagementCounts.Comments, derefString(norm.ImageRef))
-			delete(remaining, norm.RawEventID)
-		}
-	}
-
-	return nil
-}
-
-func derefString(s *string) string {
-	if s == nil {
-		return "<none>"
-	}
-	return *s
-}
-
 func generateSamples(source string) []model.RawEvent {
-	jobID := "job-fashion-demo"
-	clientID := "collector-client-01"
-
-	redditPayload, _ := json.Marshal(model.RedditPostPayload{
-		ID:          "reddit-post-987",
-		Subreddit:   "streetwear",
-		Author:      "style_curator",
-		Title:       "Oversized earth-tone trench coats are taking over this autumn",
-		Body:        "Seeing massive engagement around neutral wool silhouettes and layered textures.",
-		URL:         "https://example.com/media/trench-coat-autumn.jpg",
-		ImageURL:    "https://example.com/media/trench-coat-autumn.jpg",
-		Ups:         482,
-		NumComments: 63,
-		CreatedUTC:  time.Now().Unix(),
-	})
-
-	instagramPayload, _ := json.Marshal(model.InstagramPostPayload{
-		ID:            "insta-media-554",
-		Username:      "tokyo_fashion_pulse",
-		Caption:       "Minimalist monochrome looks dominating Shibuya this week. What are your thoughts? #streetstyle #monochrome",
-		MediaURL:      "https://example.com/media/shibuya-monochrome.jpg",
-		Permalink:     "https://instagram.com/p/C987654321",
-		LikeCount:     1540,
-		CommentsCount: 112,
-		SharesCount:   45,
-	})
-
-	externalPayload, _ := json.Marshal(model.ExternalEventPayload{
-		Author:      "feed_watcher_agent",
-		Text:        "High dwell time recorded on sustainable linen summer dress collections across lifestyle feeds.",
-		ImageURL:    "https://example.com/media/sustainable-linen-dress.jpg",
-		Likes:       320,
-		Comments:    28,
-		Shares:      14,
-		WatchTimeMs: 45000,
-	})
+	caption1 := "Minimalist monochrome looks dominating Shibuya this week. What are your thoughts? #streetstyle #monochrome"
+	caption2 := "Silk slip dress styled with chunky gold hoops for summer evenings #slipdress #fashion"
+	creator1 := "tokyo_fashion_pulse"
+	creator2 := "style_curator"
+	url1 := "https://example.com/p/C987654321"
+	url2 := "https://example.com/p/C123456789"
+	likes1 := int64(1540)
+	likes2 := int64(340)
+	commentsCount1 := int64(112)
+	commentsCount2 := int64(45)
 
 	all := []model.RawEvent{
 		{
-			EventID:    "sample-reddit",
-			Source:     model.SourceReddit,
-			SourceType: model.SourceTypePublicAPI,
-			AgentJobID: &jobID,
-			Timestamp:  time.Now().UTC(),
-			Payload:    redditPayload,
+			EventID:        "sample-instagram-1",
+			CollectedAt:    time.Now().UTC(),
+			SourcePlatform: "instagram",
+			AccountSource:  "hashtag-search-adapter",
+			Creator:        &creator1,
+			ContentURL:     &url1,
+			ContentType:    "reel",
+			Captions:       &caption1,
+			Hashtags:       []string{"streetstyle", "monochrome"},
+			MediaURLs:      []string{"https://example.com/media/shibuya-monochrome.mp4"},
+			LikesCount:     &likes1,
+			CommentsCount:  &commentsCount1,
+			Comments: []model.RawComment{
+				{Author: "user_a", Text: "Love this clean look!"},
+			},
 		},
 		{
-			EventID:    "sample-instagram",
-			Source:     model.SourceInstagram,
-			SourceType: model.SourceTypePublicAPI,
-			AgentJobID: &jobID,
-			Timestamp:  time.Now().UTC(),
-			Payload:    instagramPayload,
+			EventID:        "sample-instagram-2",
+			CollectedAt:    time.Now().UTC(),
+			SourcePlatform: "instagram",
+			AccountSource:  "business-discovery-adapter",
+			Creator:        &creator2,
+			ContentURL:     &url2,
+			ContentType:    "image",
+			Captions:       &caption2,
+			Hashtags:       []string{"slipdress", "fashion"},
+			MediaURLs:      []string{"https://example.com/media/silk-slip.jpg"},
+			LikesCount:     &likes2,
+			CommentsCount:  &commentsCount2,
 		},
 		{
-			EventID:    "sample-external",
-			Source:     model.SourceExternal,
-			SourceType: model.SourceTypeExternalIngested,
-			AgentJobID: &jobID,
-			ClientID:   &clientID,
-			Timestamp:  time.Now().UTC(),
-			Payload:    externalPayload,
+			EventID:        "sample-manual-1",
+			CollectedAt:    time.Now().UTC(),
+			SourcePlatform: "manual",
+			AccountSource:  "curator-admin",
+			ContentType:    "text",
+			Captions:       &caption2,
 		},
 	}
 
@@ -241,7 +170,7 @@ func generateSamples(source string) []model.RawEvent {
 
 	var filtered []model.RawEvent
 	for _, s := range all {
-		if s.Source == source {
+		if s.SourcePlatform == source {
 			filtered = append(filtered, s)
 		}
 	}

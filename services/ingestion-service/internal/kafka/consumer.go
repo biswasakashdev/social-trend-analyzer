@@ -7,31 +7,40 @@ import (
 	"fmt"
 	"io"
 	"log"
-
 	"time"
 
+	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/config"
+	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/datalake"
 	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/model"
-	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/normalize"
 	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/validator"
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// Consumer consumes raw events, validates, normalizes, and publishes them.
+// Consumer consumes raw events from Kafka and stores them in the data lake.
 type Consumer struct {
-	reader     *kafka.Reader
-	normalizer *normalize.Normalizer
-	validator  *validator.SchemaValidator
-	producer   *Producer
+	reader    *kafka.Reader
+	validator *validator.SchemaValidator
+	dataLake  datalake.DataLakeStore
 }
 
 // ConsumerConfig holds configuration for the Kafka consumer.
 type ConsumerConfig struct {
-	Brokers    []string
-	Topic      string
-	GroupID    string
-	Normalizer *normalize.Normalizer
-	Validator  *validator.SchemaValidator
-	Producer   *Producer
+	Brokers   []string
+	Topic     string
+	GroupID   string
+	Validator *validator.SchemaValidator
+	DataLake  datalake.DataLakeStore
+}
+
+// NewConsumerWithConfig creates a new Kafka Consumer directly using the application Config pointer.
+func NewConsumerWithConfig(cfg *config.Config, schemaValidator *validator.SchemaValidator, dataLake datalake.DataLakeStore) *Consumer {
+	return NewConsumer(ConsumerConfig{
+		Brokers:   cfg.Kafka.Brokers,
+		Topic:     cfg.Kafka.RawTopic,
+		GroupID:   cfg.Kafka.ConsumerGroup,
+		Validator: schemaValidator,
+		DataLake:  dataLake,
+	})
 }
 
 // NewConsumer creates a new Kafka Consumer.
@@ -47,10 +56,9 @@ func NewConsumer(cfg ConsumerConfig) *Consumer {
 	})
 
 	return &Consumer{
-		reader:     reader,
-		normalizer: cfg.Normalizer,
-		validator:  cfg.Validator,
-		producer:   cfg.Producer,
+		reader:    reader,
+		validator: cfg.Validator,
+		dataLake:  cfg.DataLake,
 	}
 }
 
@@ -94,17 +102,13 @@ func (c *Consumer) processMessage(ctx context.Context, data []byte) error {
 		return fmt.Errorf("unmarshaling raw event: %w", err)
 	}
 
-	// 3. Normalize
-	norm, err := c.normalizer.Normalize(&raw)
+	// 3. Store raw event in data lake for preservation and downstream processing
+	savedPath, err := c.dataLake.Store(ctx, &raw, data)
 	if err != nil {
-		return fmt.Errorf("normalizing raw event (event_id=%s): %w", raw.EventID, err)
+		return fmt.Errorf("storing raw event in data lake (event_id=%s): %w", raw.EventID, err)
 	}
 
-	// 4. Publish normalized event (PublishNormalized performs validation against normalized schema)
-	if err := c.producer.PublishNormalized(ctx, norm); err != nil {
-		return fmt.Errorf("publishing normalized event: %w", err)
-	}
-
+	log.Printf("[consumer] Stored raw event in data lake: id=%s platform=%s path=%s", raw.EventID, raw.SourcePlatform, savedPath)
 	return nil
 }
 

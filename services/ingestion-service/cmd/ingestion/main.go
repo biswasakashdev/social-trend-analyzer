@@ -8,67 +8,54 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/config"
+	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/datalake"
 	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/ingest"
 	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/kafka"
-	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/normalize"
 	"github.com/biswasakashdev/social-trends/services/ingestion-service/internal/validator"
 )
 
 func main() {
 	log.Println("[main] Starting ingestion-service...")
 
-	brokersEnv := getEnv("KAFKA_BROKERS", "localhost:9092")
-	brokers := strings.Split(brokersEnv, ",")
-	rawTopic := getEnv("KAFKA_RAW_TOPIC", "social.engagement.raw")
-	normalizedTopic := getEnv("KAFKA_NORMALIZED_TOPIC", "social.engagement.normalized")
-	consumerGroup := getEnv("KAFKA_CONSUMER_GROUP", "ingestion-service-group")
-	httpPort := getEnv("HTTP_PORT", "8081")
-
-	contractsDir, err := resolveContractsDir()
+	// Load application configuration (from .env if present and system environment)
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("[main] Failed to resolve contracts directory: %v", err)
+		log.Fatalf("[main] Failed to load configuration: %v", err)
 	}
-	log.Printf("[main] Using contracts directory: %s", contractsDir)
 
-	// 1. Initialize schema validator
-	schemaValidator, err := validator.NewSchemaValidator(contractsDir)
-	if err != nil {
-		log.Fatalf("[main] Failed to initialize schema validator: %v", err)
-	}
-	log.Println("[main] JSON Schema validator loaded successfully")
-
-	// 2. Initialize normalizer
-	normalizer := normalize.NewNormalizer()
-
-	// 3. Initialize Kafka producer
-	producer := kafka.NewProducer(kafka.ProducerConfig{
-		Brokers:         brokers,
-		NormalizedTopic: normalizedTopic,
-		RawTopic:        rawTopic,
-		SchemaValidator: schemaValidator,
-	})
-	defer producer.Close()
-
-	// 4. Initialize Kafka consumer
-	consumer := kafka.NewConsumer(kafka.ConsumerConfig{
-		Brokers:    brokers,
-		Topic:      rawTopic,
-		GroupID:    consumerGroup,
-		Normalizer: normalizer,
-		Validator:  schemaValidator,
-		Producer:   producer,
-	})
-	defer consumer.Close()
-
-	// 5. Context with cancellation on SIGINT/SIGTERM
+	// Context with cancellation on SIGINT/SIGTERM
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// 6. Start consumer loop in background
+	log.Printf("[main] Using contracts directory: %s", cfg.ContractsDir)
+
+	// 1. Initialize schema validator for raw events
+	schemaValidator, err := validator.NewSchemaValidator(cfg.ContractsDir)
+	if err != nil {
+		log.Fatalf("[main] Failed to initialize schema validator: %v", err)
+	}
+	log.Println("[main] Raw JSON Schema validator loaded successfully")
+
+	// 2. Initialize Data Lake store using config pointer (MinIO S3 object store)
+	dataLakeStore, err := datalake.NewDataLakeStore(ctx, cfg)
+	if err != nil {
+		log.Fatalf("[main] Failed to initialize MinIO data lake store: %v", err)
+	}
+	log.Printf("[main] Connected to MinIO Data Lake at %s (bucket: %s)", cfg.Minio.Endpoint, cfg.Minio.BucketName)
+
+	// 3. Initialize Kafka producer using config pointer (used exclusively by REST fallback to publish to raw topic)
+	producer := kafka.NewProducerWithConfig(cfg, schemaValidator)
+	defer producer.Close()
+
+	// 4. Initialize Kafka consumer using config pointer (collects raw data and writes to Data Lake)
+	consumer := kafka.NewConsumerWithConfig(cfg, schemaValidator, dataLakeStore)
+	defer consumer.Close()
+
+	// 5. Start consumer loop in background
 	consumerErrCh := make(chan error, 1)
 	go func() {
 		if err := consumer.Start(ctx); err != nil {
@@ -76,13 +63,13 @@ func main() {
 		}
 	}()
 
-	// 7. Setup REST fallback HTTP server
+	// 6. Setup REST fallback HTTP server
 	mux := http.NewServeMux()
 	ingestHandler := ingest.NewHandler(schemaValidator, producer)
 	ingestHandler.RegisterRoutes(mux)
 
 	server := &http.Server{
-		Addr:         ":" + httpPort,
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -90,7 +77,7 @@ func main() {
 
 	httpErrCh := make(chan error, 1)
 	go func() {
-		log.Printf("[main] REST fallback server listening on :%s", httpPort)
+		log.Printf("[main] REST fallback server listening on :%s", cfg.Server.Port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			httpErrCh <- fmt.Errorf("HTTP server error: %w", err)
 		}
@@ -116,32 +103,4 @@ func main() {
 	}
 
 	log.Println("[main] ingestion-service stopped cleanly.")
-}
-
-func getEnv(key, defaultVal string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return defaultVal
-}
-
-func resolveContractsDir() (string, error) {
-	candidates := []string{
-		os.Getenv("CONTRACTS_KAFKA_DIR"),
-		"../../contracts/kafka",
-		"../contracts/kafka",
-		"contracts/kafka",
-		"/contracts/kafka",
-	}
-
-	for _, c := range candidates {
-		if c == "" {
-			continue
-		}
-		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			return c, nil
-		}
-	}
-
-	return "", fmt.Errorf("contracts directory not found in candidates: %v", candidates)
 }

@@ -12,14 +12,12 @@ import (
 
 // SchemaValidator validates JSON byte arrays against compiled JSON schemas from /contracts/kafka.
 type SchemaValidator struct {
-	rawSchema        *jsonschema.Schema
-	normalizedSchema *jsonschema.Schema
+	rawSchema *jsonschema.Schema
 }
 
-// NewSchemaValidator initializes validators from schema files in the given directory or file paths.
+// NewSchemaValidator initializes validators from schema files in the given directory.
 func NewSchemaValidator(contractsKafkaDir string) (*SchemaValidator, error) {
 	rawSchemaPath := filepath.Join(contractsKafkaDir, "social.engagement.raw.schema.json")
-	normSchemaPath := filepath.Join(contractsKafkaDir, "social.engagement.normalized.schema.json")
 
 	compiler := jsonschema.NewCompiler()
 	compiler.Draft = jsonschema.Draft2020
@@ -36,24 +34,8 @@ func NewSchemaValidator(contractsKafkaDir string) (*SchemaValidator, error) {
 		return nil, fmt.Errorf("compiling raw schema: %w", err)
 	}
 
-	normCompiler := jsonschema.NewCompiler()
-	normCompiler.Draft = jsonschema.Draft2020
-
-	normBytes, err := os.ReadFile(normSchemaPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading normalized schema from %s: %w", normSchemaPath, err)
-	}
-	if err := normCompiler.AddResource("normalized.json", bytes.NewReader(normBytes)); err != nil {
-		return nil, fmt.Errorf("adding normalized schema resource: %w", err)
-	}
-	normalizedSchema, err := normCompiler.Compile("normalized.json")
-	if err != nil {
-		return nil, fmt.Errorf("compiling normalized schema: %w", err)
-	}
-
 	return &SchemaValidator{
-		rawSchema:        rawSchema,
-		normalizedSchema: normalizedSchema,
+		rawSchema: rawSchema,
 	}, nil
 }
 
@@ -66,19 +48,6 @@ func (v *SchemaValidator) ValidateRaw(data []byte) error {
 
 	if err := v.rawSchema.Validate(val); err != nil {
 		return fmt.Errorf("validating raw event against schema: %w", err)
-	}
-	return nil
-}
-
-// ValidateNormalized validates normalized JSON bytes against the social.engagement.normalized schema.
-func (v *SchemaValidator) ValidateNormalized(data []byte) error {
-	var val any
-	if err := json.Unmarshal(data, &val); err != nil {
-		return fmt.Errorf("unmarshaling normalized JSON for validation: %w", err)
-	}
-
-	if err := v.normalizedSchema.Validate(val); err != nil {
-		return fmt.Errorf("validating normalized event against schema: %w", err)
 	}
 	return nil
 }
