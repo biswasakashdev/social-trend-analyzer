@@ -34,53 +34,81 @@ interviewer asks "why Go here and Python there?"
 ## 2. Data Flow
 
 ```
-                 ┌─────────────────────┐
- Upstream data → │  ingestion-service   │  (Go)
- (Kafka / REST)  │  consume → validate  │
-                 │  → normalize         │
-                 └──────────┬──────────┘
-                             │ publishes: social.engagement.normalized
-                             ▼
-                 ┌─────────────────────┐
-                 │     ai-service       │  (Python / FastAPI)
-                 │  sentiment analysis  │
-                 │  vision analysis     │
-                 └──────────┬──────────┘
-                             │ publishes: social.engagement.enriched
-                             ▼
-                 ┌─────────────────────┐
-                 │  core-api-service    │  (Java / Spring Boot)
-                 │  consumes enriched   │
-                 │  events → trend      │
-                 │  aggregation → agent │
-                 │  job orchestration   │
-                 │  → calls ai-service  │
-                 │    /generate         │
-                 └──────────┬──────────┘
-                             │ REST API
-                             ▼
-                 ┌─────────────────────┐
-                 │      frontend        │  (Next.js)
-                 │  job config, trend   │
-                 │  dashboard, review   │
-                 └─────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    Producers / Adapters                     │
+  │  - Instagram Hashtag Search (curated list, 30 tags/7 days)  │
+  │  - Instagram Business Discovery (curated influencers)       │
+  │  - Client agents / Manual import / REST fallback            │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ publishes: social.engagement.raw
+                                 │ (generic platform-agnostic RawEvent)
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │         ingestion-service (Go Stream Ingest Worker)         │
+  │  - Consumes raw events from social.engagement.raw           │
+  │  - Validates against contracts/kafka/social.engagement.raw  │
+  │  - Persists directly into MinIO S3 Data Lake                │
+  │    (key: {source_platform}/{YYYY-MM-DD}/{event_id}.json)    │
+  │  * Sole purpose: preserve raw data; does NOT publish to     │
+  │    multiple Kafka topics                                    │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ uploads raw JSON objects
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │         Data Lake Storage (MinIO S3 Object Storage)         │
+  │  - Containerized MinIO instance (quay.io/minio/minio)       │
+  │  - Default bucket: socialtrend-datalake                     │
+  │  - Preserves immutable raw events for further processing    │
+  │  - Decoupled source of truth for downstream domain workers  │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ reads preserved raw JSON
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │      ai-service (Python / FastAPI — ML & Domain Worker)     │
+  │  - Reads raw event objects directly from MinIO Data Lake    │
+  │  - Cleans, categorizes, and normalizes raw content          │
+  │  - Multimodal style tagging (CLIP/BLIP) on fashion category │
+  │  - Sentiment analysis on post text / comments               │
+  │  - Exposes /generate endpoint for draft suggestions         │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │             core-api-service (Java / Spring Boot)           │
+  │  - Agent job management, orchestration, trend aggregation   │
+  │  - Trend Aggregation & Spike Detection:                    │
+  │    spike_score = volume(tag, day) / 7_day_trailing_avg      │
+  │    (requires rising unique accounts + influencer weight)    │
+  │  - Persists TrendSnapshot to Postgres                       │
+  │  - Calls ai-service /generate for draft suggestion          │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ REST API
+                                 ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                   frontend (Next.js / React)                │
+  │  - Trend dashboard (top trending styles & spike metrics)    │
+  │  - Suggestion review (approve / reject pending drafts)      │
+  └─────────────────────────────────────────────────────────────┘
 ```
 
-**Kafka topics** (single Kafka cluster shared by all services — this is the
-integration boundary between languages, so each service only needs to know
-the topic schema, not the internals of the service before/after it):
+**Kafka Integration Boundary & Contracts**:
 
-- `social.engagement.raw` — upstream sources publish here (or via the
-  ingestion-service's REST fallback, which republishes to this topic)
-- `social.engagement.normalized` — output of ingestion-service
-- `social.engagement.enriched` — output of ai-service (sentiment + vision
-  attributes attached)
+- **Raw Topic Contract**: `/contracts/kafka/` strictly defines only the contract for the raw data Kafka topic:
+  - `social.engagement.raw` — defined in `contracts/kafka/social.engagement.raw.schema.json`.
+- Upstream producers publish generic `RawEvent` records to `social.engagement.raw` (or via the ingestion-service's REST fallback `POST /ingest/events`, which republishes to this topic).
+- The `ingestion-service`'s sole purpose is to consume from `social.engagement.raw` and store raw payloads directly into MinIO Data Lake storage (bucket: `socialtrend-datalake`) for preservation. It does **not** publish to multiple Kafka topics.
+- Downstream domain processing (`ai-service` in Python) reads the preserved raw JSON records from MinIO for cleaning, categorization, style tagging, sentiment analysis, and prepares domain features for `core-api-service`.
 
-core-api-service is the only service with a full relational store (Postgres)
-— it owns `AgentJob`, `BusinessProfile`, `TrendSnapshot`, and
-`ContentSuggestion`. ingestion-service and ai-service are intentionally
-stateless workers between Kafka topics; this keeps the two "attach a new
-service to the pipeline" cases (new ingestion source, new ML step) cheap.
+**Stateless vs Stateful Services**:
+- `core-api-service` owns the relational store (Postgres) — persisting `AgentJob`, `BusinessProfile`, `TrendSnapshot`, and `ContentSuggestion`.
+- `ingestion-service` is an ingestion worker writing raw data to the MinIO Data Lake.
+- `ai-service` is a compute worker providing ML inference (sentiment, vision, generation) processing raw events from MinIO.
+
+**POC Engineering Posture & Defaults**:
+- **Data Lake Storage**: Implemented exclusively with **MinIO** (S3-compatible object store running in Docker on port `9000` with Web Console on `9001`, bucket `socialtrend-datalake`). Downstream Python services consume raw payloads directly from MinIO S3 object storage.
+- Spike detection is implemented as a scheduled batch aggregation rather than an over-engineered streaming stateful processor (e.g. Flink).
+- Basic environment variables are used for API credentials; external secrets managers are deferred.
+- Log-based observability with standard loggers; distributed tracing is deferred.
 
 ---
 
@@ -98,20 +126,20 @@ be opened.**
 ```
 social-trend-platform/
 ├── README.md                        # what it is, architecture diagram, how to run it
-├── docker-compose.yml                # Kafka, Postgres, Redis, and all 4 services for local dev
+├── docker-compose.yml                # MinIO, Kafka, Postgres, and services for local dev
 │
 ├── docs/
-│   ├── requirements.md               # your existing PRD
-│   └── architecture.md               # this file
+│   ├── requirements.md               # project requirements document
+│   ├── architecture.md               # this file
+│   ├── rules.md                      # agent rules and constraints
+│   └── phases.md                     # phase exit criteria and tracking
 │
 ├── contracts/                        # ★ the ONLY thing services depend on outside their own folder
 │   ├── kafka/
-│   │   ├── social.engagement.raw.schema.json
-│   │   ├── social.engagement.normalized.schema.json
-│   │   └── social.engagement.enriched.schema.json
+│   │   └── social.engagement.raw.schema.json   # ★ only raw data kafka topic contract lives here
 │   └── http/
-│       ├── ai-service.openapi.yaml         # ai-service's /generate contract (used by core-api-service)
-│       └── core-api-service.openapi.yaml   # core-api's public contract (used by frontend)
+│       ├── ai-service.openapi.yaml             # ai-service's /generate contract (used by core-api-service)
+│       └── core-api-service.openapi.yaml       # core-api's public contract (used by frontend)
 │
 ├── infra/
 │   ├── kafka/                        # topic/partition setup, not schemas (schemas live in /contracts)
@@ -135,7 +163,7 @@ social-trend-platform/
     │   │   ├── trend/
     │   │   │   ├── TrendSnapshot.java
     │   │   │   ├── TrendAggregationService.java
-    │   │   │   └── EnrichedEventConsumer.java   # Kafka listener on social.engagement.enriched
+    │   │   │   └── EnrichedEventConsumer.java
     │   │   ├── suggestion/
     │   │   │   ├── ContentSuggestion.java
     │   │   │   ├── SuggestionController.java
@@ -149,31 +177,37 @@ social-trend-platform/
     │   │   └── db/migration/                     # Flyway migrations
     │   └── src/test/java/com/socialtrend/core/... # unit + integration tests
     │
-    ├── ingestion-service/              # Go — Kafka consumer + normalization
+    ├── ingestion-service/              # Go — raw Kafka consumer + MinIO Data Lake store
     │   ├── CONTEXT.md
     │   ├── go.mod
-    │   ├── cmd/ingestion/main.go
+    │   ├── cmd/
+    │   │   ├── ingestion/main.go      # entrypoint
+    │   │   └── publisher/main.go      # test publisher
     │   ├── internal/
-    │   │   ├── kafka/
-    │   │   │   ├── consumer.go            # reads social.engagement.raw
-    │   │   │   └── producer.go            # writes social.engagement.normalized
-    │   │   ├── normalize/
-    │   │   │   └── normalize.go           # maps varied upstream shapes → schema in /contracts/kafka
+    │   │   ├── config/
+    │   │   │   ├── config.go          # loads .env and environment into Config struct
+    │   │   │   └── config_test.go
+    │   │   ├── datalake/
+    │   │   │   ├── store.go           # preserves raw events into MinIO S3 data lake
+    │   │   │   └── store_test.go
     │   │   ├── ingest/
-    │   │   │   └── handler.go             # REST fallback: POST /ingest/events
-    │   │   └── model/
-    │   │       └── event.go               # generated/hand-mapped from /contracts/kafka schemas
+    │   │   │   ├── handler.go         # REST fallback: POST /ingest/events
+    │   │   │   └── handler_test.go
+    │   │   ├── kafka/
+    │   │   │   ├── consumer.go        # reads raw, writes to data lake
+    │   │   │   └── producer.go        # writes to raw topic for REST fallback
+    │   │   ├── model/
+    │   │   │   └── event.go           # RawEvent and RawComment (part of ingestion-service)
+    │   │   └── validator/
+    │   │       ├── validator.go       # validates against /contracts/kafka raw schema
+    │   │       └── validator_test.go
     │   ├── Dockerfile
     │   └── ingestion_test.go
-    │
     ├── ai-service/                     # Python (FastAPI) — sentiment, vision, generation
     │   ├── CONTEXT.md
     │   ├── pyproject.toml
     │   ├── app/
     │   │   ├── main.py
-    │   │   ├── kafka/
-    │   │   │   ├── consumer.py            # reads social.engagement.normalized
-    │   │   │   └── producer.py            # writes social.engagement.enriched
     │   │   ├── sentiment/
     │   │   │   └── analyzer.py            # HF sentiment-analysis pipeline
     │   │   ├── vision/

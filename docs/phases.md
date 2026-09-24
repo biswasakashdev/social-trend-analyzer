@@ -30,35 +30,37 @@ service stubs without crashing.
 ---
 
 ## Phase 1 — Ingestion Skeleton (`ingestion-service`, Go)
-**Goal**: prove the Kafka consume → normalize → publish shape, using a fake
+**Goal**: prove the Kafka consume → validate → MinIO Data Lake preservation pipeline, using a fake
 publisher standing in for any real upstream source.
 
 - A small script/CLI publishes sample events onto `social.engagement.raw`
   (stands in for a real upstream collector, which is out of scope — see
   `docs/requirements.md` Section 8).
 - `ingestion-service` consumes `raw`, validates against
-  `/contracts/kafka/social.engagement.raw.schema.json`, normalizes, and
-  publishes to `social.engagement.normalized`.
+  `/contracts/kafka/social.engagement.raw.schema.json`, and preserves unaltered
+  raw JSON directly into MinIO Data Lake storage (`socialtrend-datalake`).
 - REST fallback endpoint (`POST /ingest/events`) exists and republishes onto
   the same `raw` topic — doesn't need a real external caller yet.
 
-**Exit criterion**: a sample raw event, published by the test script, shows
-up correctly shaped on the `normalized` topic.
+**Exit criterion**: a sample raw event, published by the test script or REST fallback,
+is validated and successfully stored in the MinIO Data Lake partitioned as
+`{source_platform}/{YYYY-MM-DD}/{event_id}.json`.
 
 ---
 
 ## Phase 2 — AI Service Core (`ai-service`, Python)
-**Goal**: sentiment + vision analysis work in isolation, feeding the
-`enriched` topic.
+**Goal**: cleaning, categorization, sentiment + vision analysis work in isolation,
+reading from MinIO Data Lake and exposing the `/generate` draft suggestion API.
 
-- Consume `social.engagement.normalized`.
-- Sentiment analysis via a free Hugging Face pipeline.
+- Read raw JSON records from MinIO Data Lake (`socialtrend-datalake`).
+- Cleaning and categorization (fashion vertical first).
+- Sentiment analysis via a free Hugging Face pipeline on captions/comments.
 - Image/fashion attribute extraction via a free Hugging Face vision model
-  (CLIP/BLIP-class).
-- Publish results to `social.engagement.enriched`, matching that schema.
+  (CLIP/BLIP-class) mapping against the controlled fashion vocabulary.
+- Implement `/generate` endpoint from `contracts/http/ai-service.openapi.yaml`.
 
-**Exit criterion**: a normalized event with an image and some comment text
-produces an enriched event with both sentiment and image attributes attached.
+**Exit criterion**: a raw event retrieved from MinIO with image media and comment text
+produces extracted sentiment, fashion category attributes, and is ready for draft generation.
 
 ---
 

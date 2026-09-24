@@ -16,11 +16,12 @@ func TestSchemaValidator_RawEvent(t *testing.T) {
 	}
 
 	validRaw := model.RawEvent{
-		EventID:    "raw-123",
-		Source:     "reddit",
-		SourceType: "public_api",
-		Timestamp:  time.Now().UTC(),
-		Payload:    json.RawMessage(`{"title":"hello world","ups":10,"num_comments":2}`),
+		EventID:        "raw-123",
+		CollectedAt:    time.Now().UTC(),
+		SourcePlatform: "instagram",
+		AccountSource:  "client-trend-app",
+		ContentType:    "image",
+		Payload:        json.RawMessage(`{"extra":"value"}`),
 	}
 	validBytes, err := json.Marshal(validRaw)
 	if err != nil {
@@ -31,78 +32,27 @@ func TestSchemaValidator_RawEvent(t *testing.T) {
 		t.Errorf("expected valid raw event to pass validation, got: %v", err)
 	}
 
-	// Missing required source_type
+	// Missing required content_type
 	invalidRaw := map[string]any{
-		"event_id":  "raw-123",
-		"source":    "reddit",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"payload":   map[string]any{"title": "hello"},
+		"event_id":        "raw-123",
+		"collected_at":    time.Now().UTC().Format(time.RFC3339),
+		"source_platform": "instagram",
+		"account_source":  "client-1",
 	}
 	invalidBytes, _ := json.Marshal(invalidRaw)
 	if err := v.ValidateRaw(invalidBytes); err == nil {
-		t.Errorf("expected validation to fail for missing source_type")
+		t.Errorf("expected validation to fail for missing content_type")
 	}
 
-	// Invalid source enum value
-	invalidSource := map[string]any{
-		"event_id":    "raw-123",
-		"source":      "unsupported_network",
-		"source_type": "public_api",
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"payload":     map[string]any{"title": "hello"},
+	// Missing required account_source
+	missingAccount := map[string]any{
+		"event_id":        "raw-123",
+		"collected_at":    time.Now().UTC().Format(time.RFC3339),
+		"source_platform": "instagram",
+		"content_type":    "video",
 	}
-	invalidSourceBytes, _ := json.Marshal(invalidSource)
-	if err := v.ValidateRaw(invalidSourceBytes); err == nil {
-		t.Errorf("expected validation to fail for invalid source enum")
-	}
-}
-
-func TestSchemaValidator_NormalizedEvent(t *testing.T) {
-	v, err := validator.NewSchemaValidator("../../../../contracts/kafka")
-	if err != nil {
-		t.Fatalf("failed to create validator: %v", err)
-	}
-
-	validNorm := model.NormalizedEvent{
-		EventID:    "norm-456",
-		RawEventID: "raw-123",
-		Source:     "reddit",
-		SourceType: "public_api",
-		Author:     "tester",
-		Text:       "Clean trench coat styling",
-		EngagementCounts: model.EngagementCounts{
-			Likes:    100,
-			Comments: 15,
-			Shares:   5,
-		},
-		Timestamp:    time.Now().UTC(),
-		NormalizedAt: time.Now().UTC(),
-	}
-	validBytes, err := json.Marshal(validNorm)
-	if err != nil {
-		t.Fatalf("marshaling valid normalized event: %v", err)
-	}
-
-	if err := v.ValidateNormalized(validBytes); err != nil {
-		t.Errorf("expected valid normalized event to pass, got: %v", err)
-	}
-
-	// Missing text
-	invalidNorm := map[string]any{
-		"event_id":     "norm-456",
-		"raw_event_id": "raw-123",
-		"source":       "reddit",
-		"source_type":  "public_api",
-		"author":       "tester",
-		"engagement_counts": map[string]any{
-			"likes":    10,
-			"comments": 2,
-		},
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-		"normalized_at": time.Now().UTC().Format(time.RFC3339),
-	}
-	invalidBytes, _ := json.Marshal(invalidNorm)
-	if err := v.ValidateNormalized(invalidBytes); err == nil {
-		t.Errorf("expected validation to fail for missing text")
+	missingAccountBytes, _ := json.Marshal(missingAccount)
+	if err := v.ValidateRaw(missingAccountBytes); err == nil {
+		t.Errorf("expected validation to fail for missing account_source")
 	}
 }

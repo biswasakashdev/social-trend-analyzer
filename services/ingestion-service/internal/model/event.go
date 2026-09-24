@@ -5,83 +5,48 @@ import (
 	"time"
 )
 
-// Source types defined in docs/project-requirements-doc.md
-const (
-	SourceReddit    = "reddit"
-	SourceInstagram = "instagram"
-	SourceExternal  = "external"
-
-	SourceTypePublicAPI         = "public_api"
-	SourceTypeExternalIngested  = "external_ingested"
-	SourceTypeAccountAutomation = "account_automation"
-)
-
-// RawEvent represents an incoming un-normalized event on social.engagement.raw.
+// RawEvent is a source-agnostic representation of a single piece of content
+// and its engagement signals, as published by any producer (a platform
+// adapter, a client agent, or a manual import) onto the raw ingestion topic.
+// No field assumes a specific platform. Anything not present at collection
+// time is nil/empty — normalization and categorization happen downstream,
+// not here.
 type RawEvent struct {
-	EventID    string          `json:"event_id"`
-	Source     string          `json:"source"`
-	SourceType string          `json:"source_type"`
-	AgentJobID *string         `json:"agent_job_id,omitempty"`
-	ClientID   *string         `json:"client_id,omitempty"`
-	Timestamp  time.Time       `json:"timestamp"`
-	Payload    json.RawMessage `json:"payload"`
+	EventID     string     `json:"event_id"`
+	CollectedAt time.Time  `json:"collected_at"`          // when we ingested it
+	OccurredAt  *time.Time `json:"occurred_at,omitempty"` // when the content was actually posted, if known
+
+	// --- Provenance ---
+	SourcePlatform string  `json:"source_platform"`   // e.g. "instagram", "youtube", "manual", "agent:trend-scanner" — free-form, not an enum
+	AccountSource  string  `json:"account_source"`    // which of OUR app's users/agents/clients published this event
+	Creator        *string `json:"creator,omitempty"` // the content's original author/owner, if known
+
+	// --- Content identity ---
+	ContentURL  *string  `json:"content_url,omitempty"`
+	ContentType string   `json:"content_type"`         // "image" | "video" | "reel" | "carousel" | "text" | "audio" | ...
+	Captions    *string  `json:"captions,omitempty"`
+	Hashtags    []string `json:"hashtags,omitempty"`
+	MediaURLs   []string `json:"media_urls,omitempty"` // supports carousels / multi-image posts
+
+	// --- Engagement signals (all optional — not every source has all of these) ---
+	LikesCount     *int64           `json:"likes_count,omitempty"`
+	CommentsCount  *int64           `json:"comments_count,omitempty"`
+	SharesCount    *int64           `json:"shares_count,omitempty"`    // reshares/reposts
+	ViewsCount     *int64           `json:"views_count,omitempty"`
+	ReactionCounts map[string]int64 `json:"reaction_counts,omitempty"` // e.g. {"like":120,"sad":4,"angry":1,"laugh":9}
+	Comments       []RawComment     `json:"comments,omitempty"`        // present only if the source exposes comment text
+
+	// --- Attention signals (rare — most sources won't provide these) ---
+	AvgWatchTimeSeconds  *float64 `json:"avg_watch_time_seconds,omitempty"`
+	ContentLengthSeconds *float64 `json:"content_length_seconds,omitempty"` // duration, for video/audio
+
+	// --- Escape hatch ---
+	Payload json.RawMessage `json:"payload,omitempty"` // raw source-specific fields that don't map cleanly above
 }
 
-// RedditPostPayload represents payload structure from Reddit collections.
-type RedditPostPayload struct {
-	ID          string `json:"id"`
-	Subreddit   string `json:"subreddit"`
-	Author      string `json:"author"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	URL         string `json:"url"`
-	ImageURL    string `json:"image_url,omitempty"`
-	Ups         int    `json:"ups"`
-	NumComments int    `json:"num_comments"`
-	CreatedUTC  int64  `json:"created_utc,omitempty"`
-}
-
-// InstagramPostPayload represents payload structure from Instagram collections.
-type InstagramPostPayload struct {
-	ID            string `json:"id"`
-	Username      string `json:"username"`
-	Caption       string `json:"caption"`
-	MediaURL      string `json:"media_url,omitempty"`
-	Permalink     string `json:"permalink,omitempty"`
-	LikeCount     int    `json:"like_count"`
-	CommentsCount int    `json:"comments_count"`
-	SharesCount   int    `json:"shares_count,omitempty"`
-}
-
-// ExternalEventPayload represents payload structure from external ingestion feeds.
-type ExternalEventPayload struct {
-	Author      string `json:"author"`
-	Text        string `json:"text"`
-	ImageURL    string `json:"image_url,omitempty"`
-	Likes       int    `json:"likes"`
-	Comments    int    `json:"comments"`
-	Shares      int    `json:"shares,omitempty"`
-	WatchTimeMs int    `json:"watch_time_ms,omitempty"`
-}
-
-// EngagementCounts contains canonical engagement metrics.
-type EngagementCounts struct {
-	Likes    int `json:"likes"`
-	Comments int `json:"comments"`
-	Shares   int `json:"shares,omitempty"`
-}
-
-// NormalizedEvent is the canonical event structure published to social.engagement.normalized.
-type NormalizedEvent struct {
-	EventID          string           `json:"event_id"`
-	RawEventID       string           `json:"raw_event_id"`
-	Source           string           `json:"source"`
-	SourceType       string           `json:"source_type"`
-	AgentJobID       *string          `json:"agent_job_id"`
-	Author           string           `json:"author"`
-	Text             string           `json:"text"`
-	ImageRef         *string          `json:"image_ref"`
-	EngagementCounts EngagementCounts `json:"engagement_counts"`
-	Timestamp        time.Time        `json:"timestamp"`
-	NormalizedAt     time.Time        `json:"normalized_at"`
+// RawComment represents comment details when provided by a source.
+type RawComment struct {
+	Author string `json:"author,omitempty"`
+	Text   string `json:"text"`
+	Likes  *int64 `json:"likes,omitempty"`
 }

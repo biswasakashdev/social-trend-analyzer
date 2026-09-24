@@ -1,18 +1,43 @@
 services:
 
   ingestion-service:
-    image: biswasakash/socialtrend-ingestion:0.1.0
+    image: biswasakash/socialtrend-ingestion:latest
     ports:
       - "8081:8081"
     environment:
       KAFKA_BROKERS: kafka:9092
       KAFKA_RAW_TOPIC: social.engagement.raw
-      KAFKA_NORMALIZED_TOPIC: social.engagement.normalized
       KAFKA_CONSUMER_GROUP: ingestion-service-group
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: socialtrend-datalake
+      MINIO_USE_SSL: "false"
       HTTP_PORT: 8081
     depends_on:
       kafka:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: socialtrend-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   kafka:
     image: apache/kafka:3.8.0
@@ -59,3 +84,4 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:

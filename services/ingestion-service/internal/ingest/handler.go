@@ -71,8 +71,8 @@ func (h *Handler) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if raw.EventID == "" {
 		raw.EventID = uuid.New().String()
 	}
-	if raw.Timestamp.IsZero() {
-		raw.Timestamp = time.Now().UTC()
+	if raw.CollectedAt.IsZero() {
+		raw.CollectedAt = time.Now().UTC()
 	}
 
 	// 3. Publish onto raw Kafka topic
@@ -87,9 +87,9 @@ func (h *Handler) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":   "accepted",
-		"event_id": raw.EventID,
-		"source":   raw.Source,
+		"status":          "accepted",
+		"event_id":        raw.EventID,
+		"source_platform": raw.SourcePlatform,
 	})
 }
 
